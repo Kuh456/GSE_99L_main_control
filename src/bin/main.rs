@@ -18,7 +18,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 use C99L_main_control::*;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_futures::select::{Either, Either3, Either4, select, select3, select4};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal, watch::Watch};
 use embassy_time::with_timeout;
 use embassy_time::{Duration, Instant, Ticker, Timer};
@@ -41,15 +41,15 @@ use static_cell::StaticCell;
 static VALVE_OPEN: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static EXECUTE_IGNITION: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static OPEN_O2: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-static TIMEOUT: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 static TO_IGNITION: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+static PANEL_RX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static VALVE_RX_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 static IGNITION_ACTIVE: AtomicBool = AtomicBool::new(false);
+static TIMEOUT_FLAG: AtomicBool = AtomicBool::new(false);
+static STATE_RESET: AtomicBool = AtomicBool::new(false);
 static BUTTON_WATCH: Watch<CriticalSectionRawMutex, u8, 2> = Watch::new();
 static SEQUENCE_STATE: AtomicU8 = AtomicU8::new(0);
-static CAN_ERROR: AtomicBool = AtomicBool::new(false);
-static PANEL_RX_WATCH: Watch<CriticalSectionRawMutex, Instant, 2> = Watch::new();
-static VALVE_RX_WATCH: Watch<CriticalSectionRawMutex, Instant, 2> = Watch::new();
 
 #[embassy_executor::task]
 async fn can_transmit_task(mut tx: twai::TwaiTx<'static, Async>) {
@@ -62,15 +62,36 @@ async fn can_transmit_task(mut tx: twai::TwaiTx<'static, Async>) {
             //  500ms経過した（通常処理）.
             Either::First(_) => {
                 let main_state = { SEQUENCE_STATE.load(Ordering::Relaxed) }; // 送信する前に現在の状態を読み込む
-                let frame_to_send = EspTwaiFrame::new(
+                let frame_to_valve = EspTwaiFrame::new(
+                    StandardId::new(CAN_ID_TO_MAIN_VALVE_ACK).unwrap(),
+                    &[main_state],
+                )
+                .unwrap();
+                let frame_to_ctrl = EspTwaiFrame::new(
                     StandardId::new(CAN_ID_TO_CTRL_MAIN_STATE).unwrap(),
                     &[main_state],
                 )
                 .unwrap();
-                let result =
-                    with_timeout(Duration::from_millis(50), tx.transmit_async(&frame_to_send))
+                let result1 =
+                    with_timeout(Duration::from_millis(50), tx.transmit_async(&frame_to_ctrl))
                         .await;
-                match result {
+                match result1 {
+                    //  指定時間内に終わらなかった (外側のResultがErr)
+                    Err(_timeout_error) => {}
+
+                    //  時間内に終わったが、通信エラーまたは切断が発生した (内側のResultがErr)
+                    Ok(Err(can_err)) => {
+                        println!("can_tx_err: {:?}", can_err);
+                    }
+                    //  時間内に正常に受信完了 (両方ともOk)
+                    Ok(Ok(())) => {}
+                }
+                let result2 = with_timeout(
+                    Duration::from_millis(50),
+                    tx.transmit_async(&frame_to_valve),
+                )
+                .await;
+                match result2 {
                     //  指定時間内に終わらなかった (外側のResultがErr)
                     Err(_timeout_error) => {}
 
@@ -114,10 +135,6 @@ async fn can_transmit_task(mut tx: twai::TwaiTx<'static, Async>) {
 async fn can_receive_task(mut rx: twai::TwaiRx<'static, Async>) {
     let button_sender = BUTTON_WATCH.sender();
     button_sender.send(0); // 未初期化状態を防ぐために初期値0を送信
-    let panel_time_sender = PANEL_RX_WATCH.sender();
-    let valve_time_sender = VALVE_RX_WATCH.sender();
-    panel_time_sender.send(Instant::now());
-    valve_time_sender.send(Instant::now());
     loop {
         let result = with_timeout(Duration::from_secs(3), rx.receive_async()).await;
         match result {
@@ -126,24 +143,21 @@ async fn can_receive_task(mut rx: twai::TwaiRx<'static, Async>) {
                     let message = payload.data()[0];
                     match payload.id() {
                         Id::Standard(s_id) if s_id.as_raw() == CAN_ID_FROM_CONTROL_PANEL => {
-                            panel_time_sender.send(Instant::now());
+                            PANEL_RX_SIGNAL.signal(());
                             button_sender.send(message);
                         }
                         Id::Standard(s_id) if s_id.as_raw() == CAN_ID_FROM_MAIN_VALVE_ACK => {
-                            valve_time_sender.send(Instant::now());
-                            button_sender.send(message);
+                            VALVE_RX_SIGNAL.signal(());
                         }
                         _ => {}
                     }
                 }
                 Err(can_err) => {
                     println!("can_rx_err: {:?}", can_err);
-                    CAN_ERROR.store(true, Ordering::Relaxed);
                 }
             },
             Err(_) => {
                 // CAN受信エラー(TIMEOUT).
-                CAN_ERROR.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -158,7 +172,7 @@ async fn execute_ignition_task(mut fire: Output<'static>, emergency_sw: Input<'s
             fn drop(&mut self) {
                 IGNITION_ACTIVE.store(false, Ordering::Relaxed);
                 OPEN_O2.signal(false);
-                TIMEOUT.signal(true);
+                TIMEOUT_FLAG.store(true, Ordering::Relaxed);
             }
         }
         let _guard = IgnitionGuard;
@@ -184,7 +198,7 @@ async fn execute_ignition_task(mut fire: Output<'static>, emergency_sw: Input<'s
 
         Timer::after(Duration::from_millis(IGNITION_SEQUENCE_TIMEOUT_MS)).await;
         fire.set_low();
-        TIMEOUT.signal(true);
+        TIMEOUT_FLAG.store(true, Ordering::Relaxed);
     }
 }
 
@@ -247,10 +261,17 @@ async fn solenoid_valve_task(
         let separate_flag = ((current_button_state >> 3) & 1) == 1;
         let valve_set_flag = ((current_button_state >> 4) & 1) == 1;
         let o2_test_flag = ((current_button_state >> 5) & 1) == 1;
-        // println!(
-        //     "Button state: dump={}, fire={}, fill={}, separate={}, valve_set={}, o2_test={}",
-        //     dump_flag, fire_flag, fill_flag, separate_flag, valve_set_flag, o2_test_flag
-        // );
+        let main_reset_flag = ((current_button_state >> 6) & 1) == 1;
+        println!(
+            "Button state: dump={}, fire={}, fill={}, separate={}, valve_set={}, o2_test={}, main_reset={}",
+            dump_flag,
+            fire_flag,
+            fill_flag,
+            separate_flag,
+            valve_set_flag,
+            o2_test_flag,
+            main_reset_flag
+        );
 
         dump.set_level(dump_flag.into());
         fill.set_level(fill_flag.into());
@@ -262,8 +283,11 @@ async fn solenoid_valve_task(
         if valve_set_flag {
             VALVE_OPEN.signal(false);
         }
+        if main_reset_flag {
+            STATE_RESET.store(true, Ordering::Relaxed);
+        }
 
-        //  3秒間だけ O2 を HIGH にする 
+        //  3秒間だけ O2 を HIGH にする
         let is_ignition_running = IGNITION_ACTIVE.load(Ordering::Relaxed);
         if is_ignition_running {
             o2_test_end_time = None;
@@ -350,62 +374,89 @@ async fn main(spawner: Spawner) -> ! {
     spawner
         .spawn(execute_ignition_task(ignition, emergency_sw))
         .ok();
-    let Some(mut panel_time_rx) = PANEL_RX_WATCH.receiver() else {
-        loop {}
-    };
-    let Some(mut valve_time_rx) = VALVE_RX_WATCH.receiver() else {
-        loop {}
-    };
     // --- State Definitions ---
     let mut state = STATE::IDLE;
     let mut has_timed_out = false;
-    let mut ticker = Ticker::every(Duration::from_millis(200));
-    let mut panel_last_time = Instant::now();
-    let mut valve_last_time = Instant::now();
+    let timeout_duration = Duration::from_millis(COMMUNICATION_TIMEOUT_MS);
+    let mut panel_deadline = Instant::now() + timeout_duration;
+    let mut valve_deadline = Instant::now() + timeout_duration;
     // main loop controls the system state
     loop {
-        if let Some(new_time) = panel_time_rx.try_get() {
-            panel_last_time = new_time;
+        let next_timeout = panel_deadline.min(valve_deadline);
+        SEQUENCE_STATE.store(state.into(), Ordering::Relaxed);
+        let state_reset_flag = STATE_RESET.load(Ordering::Relaxed);
+        if state_reset_flag && matches!(state, STATE::TIMEOUT) {
+            state = STATE::IDLE;
+            has_timed_out = false;
+            STATE_RESET.store(false, Ordering::Relaxed);
         }
-        if let Some(new_time) = valve_time_rx.try_get() {
-            valve_last_time = new_time;
+        if TIMEOUT_FLAG.load(Ordering::Relaxed) {
+            state = STATE::TIMEOUT;
+            has_timed_out = true;
+            TIMEOUT_FLAG.store(false, Ordering::Relaxed);
         }
-        match select3(TIMEOUT.wait(), TO_IGNITION.wait(), ticker.next()).await {
-            // 点火シーケンスタイムアウト.
-            Either3::First(_) => {
-                state = STATE::TIMEOUT;
-                has_timed_out = true;
-            }
-
-            // 点火リクエスト受信.
+        match select4(
+            TO_IGNITION.wait(),
+            VALVE_RX_SIGNAL.wait(),
+            PANEL_RX_SIGNAL.wait(),
+            Timer::at(next_timeout), // <--- デッドライン時刻までスリープ
+        )
+        .await
+        {
+            //  点火リクエスト受信
             // IDLE -> IGNITIONに移るときだけ点火シーケンスを実行.
-            // state = TIMEOUTのときは酸素電磁弁のみを操作.
-            Either3::Second(_) => {
+            // state = TIMEOUTのときはメインバルブのみを操作.
+            Either4::First(_) => {
                 if matches!(state, STATE::IDLE) {
                     IGNITION_ACTIVE.store(true, Ordering::Relaxed);
                     OPEN_O2.signal(true);
                     state = STATE::IGNITION;
                     EXECUTE_IGNITION.signal(true);
                 } else if matches!(state, STATE::TIMEOUT) {
-                    OPEN_O2.signal(true);
+                    VALVE_OPEN.signal(true);
                 }
             }
-            Either3::Third(_) => {
-                let timeout_duration = Duration::from_millis(COMMUNICATION_TIMEOUT_MS);
-                let is_panel_timeout = panel_last_time.elapsed() > timeout_duration;
-                let is_valve_timeout = valve_last_time.elapsed() > timeout_duration;
-                let is_bus_error = CAN_ERROR.load(Ordering::Relaxed);
-                if is_panel_timeout || is_valve_timeout || is_bus_error {
-                    state = STATE::CANERROR;
-                } else if matches!(state, STATE::CANERROR) {
-                    if has_timed_out {
-                        state = STATE::TIMEOUT;
-                    } else {
-                        state = STATE::IDLE;
+
+            //  CAN通信でバルブ状態の受信
+            Either4::Second(_) => {
+                valve_deadline = Instant::now() + timeout_duration;
+                if matches!(state, STATE::CANERROR) {
+                    // 両方とも正常なら復帰
+                    let now = Instant::now();
+                    if panel_deadline > now && valve_deadline > now {
+                        state = if has_timed_out {
+                            STATE::TIMEOUT
+                        } else {
+                            STATE::IDLE
+                        };
                     }
                 }
             }
+
+            //  CAN通信のイベントを受信
+            Either4::Third(_) => {
+                panel_deadline = Instant::now() + timeout_duration;
+                // エラー状態からの自動復帰ロジック
+                if matches!(state, STATE::CANERROR) {
+                    // 両方とも正常なら復帰
+                    let now = Instant::now();
+                    if panel_deadline > now && valve_deadline > now {
+                        state = if has_timed_out {
+                            STATE::TIMEOUT
+                        } else {
+                            STATE::IDLE
+                        };
+                    }
+                }
+            }
+
+            // 通信のタイムアウト
+            Either4::Fourth(_) => {
+                println!("Communication Timeout Error!");
+                state = STATE::CANERROR;
+            }
         }
+
         // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
     }
 }

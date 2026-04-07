@@ -10,7 +10,7 @@ pub const CAN_ID_FROM_MAIN_VALVE_ACK: u16 = 0x201;
 // --- Time Definitions
 pub const IGNITION_WAIT_MS: u64 = 20000; // 点火ボタンを押し続けてからイグナイターをONにするまでの時間 (ms)
 pub const IGNITION_SEQUENCE_TIMEOUT_MS: u64 = 10000; // シーケンスのタイムアウト (ms)
-pub const MAIN_VALVE_OPEN_DELAY_MS: u64 = 2000; // 点火シーケンス開始後,メインバルブを開くまでの時間 (ms)
+pub const MAIN_VALVE_OPEN_DELAY_MS: u64 = 2000; // イグナイター点火後,メインバルブを開くまでの時間 (ms)
 pub const COMMUNICATION_TIMEOUT_MS: u64 = 3000; // メインバルブ、コントロールパネルとの通信タイムアウト (ms)
 
 #[derive(Clone, Copy)]
