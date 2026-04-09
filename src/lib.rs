@@ -1,4 +1,7 @@
 #![no_std]
+pub mod state;
+pub mod tasks;
+
 // --- CAN ID Definitions ---
 pub const CAN_ID_FROM_CONTROL_PANEL: u16 = 0x101;
 pub const CAN_ID_TO_CTRL_MAIN_STATE: u16 = 0x103;

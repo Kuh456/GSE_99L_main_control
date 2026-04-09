@@ -3,25 +3,6 @@
 version = 4
 
 [[package]]
-name = "C99L_main_control"
-version = "0.1.0"
-dependencies = [
- "critical-section",
- "embassy-executor",
- "embassy-futures",
- "embassy-sync 0.7.2",
- "embassy-time",
- "embedded-can",
- "esp-backtrace",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "esp-rtos",
- "nb 1.1.0",
- "static_cell",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -73,6 +54,25 @@ name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
+name = "c99l_main_control"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embedded-can",
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "esp-rtos",
+ "nb 1.1.0",
+ "static_cell",
+]
 
 [[package]]
 name = "cfg-if"

@@ -1,11 +1,11 @@
 [package]
 edition      = "2024"
-name         = "C99L_main_control"
+name         = "c99l_main_control"
 rust-version = "1.88"
 version      = "0.1.0"
 
 [[bin]]
-name = "C99L_main_control"
+name = "c99l_main_control"
 path = "./src/bin/main.rs"
 
 [dependencies]
