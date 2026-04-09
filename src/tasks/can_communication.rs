@@ -1,6 +1,7 @@
 use crate::{
-    CAN_ID_FROM_CONTROL_PANEL, CAN_ID_TO_CTRL_MAIN_STATE, CAN_ID_TO_MAIN_VALVE,
-    state::{BUTTON_WATCH, PANEL_RX_SIGNAL, SEQUENCE_STATE, VALVE_OPEN},
+    BUTTON_WATCH, CAN_ID_FROM_CONTROL_PANEL, CAN_ID_FROM_MAIN_VALVE_ACK, CAN_ID_TO_CTRL_MAIN_STATE,
+    CAN_ID_TO_MAIN_VALVE, CAN_ID_TO_MAIN_VALVE_ACK, PANEL_RX_SIGNAL, SEQUENCE_STATE, VALVE_OPEN,
+    VALVE_RX_SIGNAL,
 };
 use core::sync::atomic::Ordering;
 use embassy_futures::select::{Either, select};
@@ -14,7 +15,7 @@ use esp_println::println;
 
 #[embassy_executor::task]
 pub async fn can_transmit_task(mut tx: twai::TwaiTx<'static, Async>) {
-    let mut ticker = Ticker::every(Duration::from_millis(500));
+    let mut ticker = Ticker::every(Duration::from_millis(100));
     loop {
         let open_fut = VALVE_OPEN.wait();
 
@@ -24,7 +25,7 @@ pub async fn can_transmit_task(mut tx: twai::TwaiTx<'static, Async>) {
             Either::First(_) => {
                 let main_state = { SEQUENCE_STATE.load(Ordering::Relaxed) }; // 送信する前に現在の状態を読み込む
                 send_can_message(&mut tx, CAN_ID_TO_CTRL_MAIN_STATE, &[main_state]).await;
-                send_can_message(&mut tx, CAN_ID_TO_CTRL_MAIN_STATE, &[main_state]).await;
+                send_can_message(&mut tx, CAN_ID_TO_MAIN_VALVE_ACK, &[main_state]).await;
             }
             // valve close:0 , valve open:1
             Either::Second(valve_flag) => {
@@ -49,8 +50,8 @@ pub async fn can_receive_task(mut rx: twai::TwaiRx<'static, Async>) {
                             button_sender.send(payload.data()[0]);
                         }
                     }
-                    Id::Standard(s_id) if s_id.as_raw() == CAN_ID_TO_MAIN_VALVE => {
-                        PANEL_RX_SIGNAL.signal(());
+                    Id::Standard(s_id) if s_id.as_raw() == CAN_ID_FROM_MAIN_VALVE_ACK => {
+                        VALVE_RX_SIGNAL.signal(());
                     }
                     _ => {}
                 }

@@ -12,9 +12,8 @@
 esp_bootloader_esp_idf::esp_app_desc!();
 
 use c99l_main_control::{
-    state::*, // 状態変数をインポート
     tasks::{can_communication::*, execute_ignition::*, solenoid_valve::*}, // 各タスクをインポート
-    *,        // 定数をインポート
+    *,                                                                     // 定数をインポート
 };
 #[allow(
     clippy::large_stack_frames,
@@ -141,8 +140,7 @@ async fn main(spawner: Spawner) -> ! {
             // state = TIMEOUTのときはメインバルブのみを操作.
             Either4::First(_) => {
                 if matches!(state, STATE::IDLE) {
-                    IGNITION_ACTIVE.store(true, Ordering::Relaxed);
-                    OPEN_O2.signal(true);
+                    OPEN_O2.sender().send(true); // O2開放指示 
                     state = STATE::IGNITION;
                     EXECUTE_IGNITION.signal(true);
                 } else if matches!(state, STATE::TIMEOUT) {

@@ -1,6 +1,6 @@
 use crate::{
-    IGNITION_SEQUENCE_TIMEOUT_MS, IGNITION_WAIT_MS, MAIN_VALVE_OPEN_DELAY_MS,
-    state::{EXECUTE_IGNITION, IGNITION_ACTIVE, OPEN_O2, TIMEOUT_FLAG, VALVE_OPEN},
+    EXECUTE_IGNITION, IGNITION_ACTIVE, IGNITION_SEQUENCE_TIMEOUT_MS, IGNITION_WAIT_MS,
+    MAIN_VALVE_OPEN_DELAY_MS, OPEN_O2, TIMEOUT_FLAG, VALVE_OPEN,
 };
 use core::sync::atomic::Ordering;
 use embassy_futures::select::{Either, select};
@@ -28,7 +28,7 @@ pub async fn execute_ignition_task(mut fire: Output<'static>, mut emergency_sw: 
         impl Drop for IgnitionGuard {
             fn drop(&mut self) {
                 IGNITION_ACTIVE.store(false, Ordering::Relaxed);
-                OPEN_O2.signal(false);
+                OPEN_O2.sender().send(true); // O2開放指示
                 TIMEOUT_FLAG.store(true, Ordering::Relaxed); // 必要に応じてメインのステートを更新
             }
         }
@@ -53,7 +53,7 @@ pub async fn execute_ignition_task(mut fire: Output<'static>, mut emergency_sw: 
         fire.set_high();
         match select(
             Timer::after(Duration::from_millis(MAIN_VALVE_OPEN_DELAY_MS)),
-            emergency_sw.wait_for_low(),
+            emergency_sw.wait_for_high(),
         )
         .await
         {
@@ -67,7 +67,7 @@ pub async fn execute_ignition_task(mut fire: Output<'static>, mut emergency_sw: 
 
         // バルブ開放と最終タイムアウト
         VALVE_OPEN.signal(true);
-        OPEN_O2.signal(false);
+        OPEN_O2.sender().send(true); // O2開放指示
         Timer::after(Duration::from_millis(IGNITION_SEQUENCE_TIMEOUT_MS)).await;
 
         fire.set_low();

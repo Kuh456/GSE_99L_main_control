@@ -1,9 +1,9 @@
+use crate::{BUTTON_WATCH, IGNITION_ACTIVE, OPEN_O2, STATE_RESET, TO_IGNITION, VALVE_OPEN};
 use core::sync::atomic::Ordering;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::Output;
 use esp_println::println;
-use crate::state::{BUTTON_WATCH, IGNITION_ACTIVE, OPEN_O2, STATE_RESET, TO_IGNITION, VALVE_OPEN};
 
 #[embassy_executor::task]
 pub async fn solenoid_valve_task(
@@ -16,6 +16,10 @@ pub async fn solenoid_valve_task(
         println!("Failed to create button state receiver: Maximum receivers reached.");
         return;
     };
+    let Some(mut o2_receiver) = OPEN_O2.receiver() else {
+        println!("Failed to create O2 state receiver: Maximum receivers reached.");
+        return;
+    };
 
     let mut current_button_state = 0;
     let mut current_o2_flag = false;
@@ -26,7 +30,7 @@ pub async fn solenoid_valve_task(
 
     loop {
         let button_fut = button_receiver.changed();
-        let o2_fut = OPEN_O2.wait();
+        let o2_fut = o2_receiver.changed();
 
         // タイマー稼働中かどうかで分ける
         match o2_test_end_time {
