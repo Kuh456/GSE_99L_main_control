@@ -5,7 +5,7 @@ use crate::{
 };
 use core::sync::atomic::Ordering;
 use embassy_futures::select::{Either, select};
-use embassy_time::{Duration, Ticker, with_timeout};
+use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use embedded_can::{Frame, Id};
 use esp_hal::{
     Async,
@@ -15,7 +15,7 @@ use esp_println::println;
 
 #[embassy_executor::task]
 pub async fn can_transmit_task(mut tx: twai::TwaiTx<'static, Async>) {
-    let mut ticker = Ticker::every(Duration::from_millis(100));
+    let mut ticker = Ticker::every(Duration::from_millis(200));
     loop {
         let open_fut = VALVE_OPEN.wait();
 
@@ -101,6 +101,7 @@ async fn receive_can_message(
         }
         Err(_) => {
             // タイムアウトは通常の待機状態なのでエラーログは出さない
+            Timer::after(Duration::from_millis(50)).await;
             None
         }
     }

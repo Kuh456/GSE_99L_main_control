@@ -28,7 +28,7 @@ pub async fn execute_ignition_task(mut fire: Output<'static>, mut emergency_sw: 
         impl Drop for IgnitionGuard {
             fn drop(&mut self) {
                 IGNITION_ACTIVE.store(false, Ordering::Relaxed);
-                OPEN_O2.sender().send(true); // O2開放指示
+                OPEN_O2.sender().send(false); // O2開放指示
                 TIMEOUT_FLAG.store(true, Ordering::Relaxed); // 必要に応じてメインのステートを更新
             }
         }
@@ -65,12 +65,12 @@ pub async fn execute_ignition_task(mut fire: Output<'static>, mut emergency_sw: 
             }
         }
 
+        fire.set_low();
         // バルブ開放と最終タイムアウト
         VALVE_OPEN.signal(true);
         OPEN_O2.sender().send(true); // O2開放指示
         Timer::after(Duration::from_millis(IGNITION_SEQUENCE_TIMEOUT_MS)).await;
-
-        fire.set_low();
+        fire.set_low(); // 念のため点火を確実にオフ
         // ループの先頭に戻り、次の点火シーケンスに備える
     }
 }

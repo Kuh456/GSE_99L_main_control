@@ -114,7 +114,18 @@ async fn main(spawner: Spawner) -> ! {
     let mut valve_deadline = Instant::now() + timeout_duration;
     // main loop controls the system state
     loop {
-        let next_timeout = panel_deadline.min(valve_deadline);
+        let now = Instant::now();
+        if now >= panel_deadline {
+            println!("Panel Communication Timeout Error!");
+            state = STATE::CANERROR;
+            panel_deadline += timeout_duration;
+        }
+
+        if now >= valve_deadline {
+            println!("Valve Communication Timeout Error!");
+            state = STATE::CANERROR;
+            valve_deadline += timeout_duration;
+        }
         SEQUENCE_STATE.store(state.into(), Ordering::Relaxed);
         let state_reset_flag = STATE_RESET.load(Ordering::Relaxed);
         if state_reset_flag && matches!(state, STATE::TIMEOUT) {
@@ -127,6 +138,7 @@ async fn main(spawner: Spawner) -> ! {
             has_timed_out = true;
             TIMEOUT_FLAG.store(false, Ordering::Relaxed);
         }
+        let next_timeout = panel_deadline.min(valve_deadline);
         match select4(
             TO_IGNITION.wait(),
             VALVE_RX_SIGNAL.wait(),
@@ -182,13 +194,7 @@ async fn main(spawner: Spawner) -> ! {
             }
 
             // 通信のタイムアウト
-            Either4::Fourth(_) => {
-                println!("Communication Timeout Error!");
-                state = STATE::CANERROR;
-                let now = Instant::now();
-                panel_deadline = now + timeout_duration;
-                valve_deadline = now + timeout_duration;
-            }
+            Either4::Fourth(_) => {}
         }
 
         // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
