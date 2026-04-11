@@ -110,23 +110,43 @@ async fn main(spawner: Spawner) -> ! {
     let mut state = STATE::IDLE;
     let mut has_timed_out = false;
     let timeout_duration = Duration::from_millis(COMMUNICATION_TIMEOUT_MS);
-    let mut panel_deadline = Instant::now() + timeout_duration;
-    let mut valve_deadline = Instant::now() + timeout_duration;
+    let mut last_panel_rx = Instant::now();
+    let mut last_valve_rx = Instant::now();
+
     // main loop controls the system state
     loop {
+        // 次のタイムアウト時刻の計算
         let now = Instant::now();
-        if now >= panel_deadline {
-            // println!("Panel Communication Timeout Error!");
-            state = STATE::CANERROR;
-            panel_deadline += timeout_duration;
+        let panel_alive = now < last_panel_rx + timeout_duration;
+        let valve_alive = now < last_valve_rx + timeout_duration;
+
+        if panel_alive && valve_alive {
+            // 両方とも正常
+            if matches!(state, STATE::CANERROR) {
+                // CANERRORからの自動復帰
+                state = if has_timed_out {
+                    STATE::TIMEOUT
+                } else {
+                    STATE::IDLE
+                };
+            }
+        } else {
+            // どちらか（または両方）がタイムアウトしている
+            if !matches!(state, STATE::CANERROR) {
+                // println!("Communication Timeout Error!");
+                state = STATE::CANERROR;
+            }
         }
 
-        if now >= valve_deadline {
-            // println!("Valve Communication Timeout Error!");
-            state = STATE::CANERROR;
-            valve_deadline += timeout_duration;
+        let mut next_wakeup = now + embassy_time::Duration::from_secs(3600);
+        if panel_alive {
+            next_wakeup = next_wakeup.min(last_panel_rx + timeout_duration);
         }
-        SEQUENCE_STATE.store(state.into(), Ordering::Relaxed);
+        if valve_alive {
+            next_wakeup = next_wakeup.min(last_valve_rx + timeout_duration);
+        }
+
+        //  外部からの状態リセット・タイムアウトフラグの処理
         let state_reset_flag = STATE_RESET.load(Ordering::Relaxed);
         if state_reset_flag && matches!(state, STATE::TIMEOUT) {
             state = STATE::IDLE;
@@ -138,18 +158,19 @@ async fn main(spawner: Spawner) -> ! {
             has_timed_out = true;
             TIMEOUT_FLAG.store(false, Ordering::Relaxed);
         }
-        let next_timeout = panel_deadline.min(valve_deadline);
+
+        // 現在のステートを全体に共有
+        SEQUENCE_STATE.store(state.into(), Ordering::Relaxed);
+
         match select4(
             TO_IGNITION.wait(),
             VALVE_RX_SIGNAL.wait(),
             PANEL_RX_SIGNAL.wait(),
-            Timer::at(next_timeout), // <--- デッドライン時刻までスリープ
+            Timer::at(next_wakeup),
         )
         .await
         {
-            //  点火リクエスト受信
-            // IDLE -> IGNITIONに移るときだけ点火シーケンスを実行.
-            // state = TIMEOUTのときはメインバルブのみを操作.
+            // 点火リクエスト受信
             Either4::First(_) => {
                 if matches!(state, STATE::IDLE) {
                     OPEN_O2.sender().send(true); // O2開放指示 
@@ -159,44 +180,16 @@ async fn main(spawner: Spawner) -> ! {
                     VALVE_OPEN.signal(true);
                 }
             }
-
-            //  CAN通信でバルブ状態の受信
+            // VALVEからのCAN通信受信
             Either4::Second(_) => {
-                valve_deadline = Instant::now() + timeout_duration;
-                if matches!(state, STATE::CANERROR) {
-                    // 両方とも正常なら復帰
-                    let now = Instant::now();
-                    if panel_deadline > now && valve_deadline > now {
-                        state = if has_timed_out {
-                            STATE::TIMEOUT
-                        } else {
-                            STATE::IDLE
-                        };
-                    }
-                }
+                last_valve_rx = Instant::now();
             }
-
-            //  CAN通信のイベントを受信
+            // PANELからのCAN通信受信
             Either4::Third(_) => {
-                panel_deadline = Instant::now() + timeout_duration;
-                // エラー状態からの自動復帰ロジック
-                if matches!(state, STATE::CANERROR) {
-                    // 両方とも正常なら復帰
-                    let now = Instant::now();
-                    if panel_deadline > now && valve_deadline > now {
-                        state = if has_timed_out {
-                            STATE::TIMEOUT
-                        } else {
-                            STATE::IDLE
-                        };
-                    }
-                }
+                last_panel_rx = Instant::now();
             }
-
             // 通信のタイムアウト
             Either4::Fourth(_) => {}
         }
-        Timer::after(Duration::from_millis(100)).await; 
-        // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
     }
 }
