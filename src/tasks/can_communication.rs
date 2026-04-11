@@ -4,7 +4,7 @@ use crate::{
     VALVE_RX_SIGNAL,
 };
 use core::sync::atomic::Ordering;
-use embassy_futures::select::{Either, select};
+use embassy_futures::{select::{Either, select}, yield_now};
 use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use embedded_can::{Frame, Id};
 use esp_hal::{
@@ -15,7 +15,7 @@ use esp_println::println;
 
 #[embassy_executor::task]
 pub async fn can_transmit_task(mut tx: twai::TwaiTx<'static, Async>) {
-    let mut ticker = Ticker::every(Duration::from_millis(200));
+    let mut ticker = Ticker::every(Duration::from_millis(50));
     loop {
         let open_fut = VALVE_OPEN.wait();
 
@@ -57,31 +57,28 @@ pub async fn can_receive_task(mut rx: twai::TwaiRx<'static, Async>) {
                 }
             }
         }
+        yield_now().await;
     }
 }
 
 // --- CAN Helper Functions ---
 /// CANメッセージを送信するラッパー関数
 async fn send_can_message(tx: &mut twai::TwaiTx<'_, Async>, id: u16, data: &[u8]) {
-    // 11bitの標準IDとして有効かチェック
     let std_id = match StandardId::new(id) {
+        // 11bitの標準IDとして有効かチェック
         Some(id) => id,
         None => {
-            println!("Error: Invalid CAN ID (0x{:x})", id);
+            esp_println::println!("Error: Invalid CAN ID (0x{:x})", id);
             return;
         }
     };
 
-    // フレームの作成
     let frame = EspTwaiFrame::new(std_id, data).unwrap();
-
-    // 送信処理
     let result = tx.transmit_async(&frame).await;
-
     match result {
         Ok(()) => {} // 送信成功
         Err(e) => {
-            println!("CAN Transmit Error (ID: 0x{:x}): {:?}", id, e);
+            // esp_println::println!("CAN Transmit Error (ID: 0x{:x}): {:?}", id, e);
         }
     }
 }
@@ -96,7 +93,8 @@ async fn receive_can_message(
     match result {
         Ok(Ok(frame)) => Some(frame), // 受信成功
         Ok(Err(e)) => {
-            println!("CAN Receive Error: {:?}", e);
+            // println!("CAN Receive Error: {:?}", e);
+            Timer::after(Duration::from_millis(50)).await;
             None
         }
         Err(_) => {

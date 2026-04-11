@@ -69,16 +69,16 @@ pub async fn solenoid_valve_task(
         let valve_set_flag = ((current_button_state >> 4) & 1) == 1;
         let o2_test_flag = ((current_button_state >> 5) & 1) == 1;
         let main_reset_flag = ((current_button_state >> 6) & 1) == 1;
-        println!(
-            "Button state: dump={}, fire={}, fill={}, separate={}, valve_set={}, o2_test={}, main_reset={}",
-            dump_flag,
-            fire_flag,
-            fill_flag,
-            separate_flag,
-            valve_set_flag,
-            o2_test_flag,
-            main_reset_flag
-        );
+        // println!(
+        //     "Button state: dump={}, fire={}, fill={}, separate={}, valve_set={}, o2_test={}, main_reset={}",
+        //     dump_flag,
+        //     fire_flag,
+        //     fill_flag,
+        //     separate_flag,
+        //     valve_set_flag,
+        //     o2_test_flag,
+        //     main_reset_flag
+        // );
 
         dump.set_level(dump_flag.into());
         fill.set_level(fill_flag.into());

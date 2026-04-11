@@ -116,13 +116,13 @@ async fn main(spawner: Spawner) -> ! {
     loop {
         let now = Instant::now();
         if now >= panel_deadline {
-            println!("Panel Communication Timeout Error!");
+            // println!("Panel Communication Timeout Error!");
             state = STATE::CANERROR;
             panel_deadline += timeout_duration;
         }
 
         if now >= valve_deadline {
-            println!("Valve Communication Timeout Error!");
+            // println!("Valve Communication Timeout Error!");
             state = STATE::CANERROR;
             valve_deadline += timeout_duration;
         }
@@ -196,7 +196,7 @@ async fn main(spawner: Spawner) -> ! {
             // 通信のタイムアウト
             Either4::Fourth(_) => {}
         }
-
+        Timer::after(Duration::from_millis(100)).await; 
         // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
     }
 }

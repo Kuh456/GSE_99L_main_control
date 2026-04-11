@@ -18,7 +18,7 @@ pub async fn execute_ignition_task(mut fire: Output<'static>, mut emergency_sw: 
             }
             Either::First(false) => continue, // 誤信号などは無視
             Either::Second(_) => {
-                println!("Emergency switch pressed during IDLE.");
+                // println!("Emergency switch pressed during IDLE.");
                 continue; // 待機中の緊急停止。安全なのでループの先頭に戻る
             }
         }
@@ -44,7 +44,7 @@ pub async fn execute_ignition_task(mut fire: Output<'static>, mut emergency_sw: 
         {
             Either::First(_) => { /* 待機完了、次へ */ }
             Either::Second(_) => {
-                println!("Aborted: Emergency switch activated during ignition wait time.");
+                // println!("Aborted: Emergency switch activated during ignition wait time.");
                 continue; // ガードがドロップされ、安全状態に戻ってループ先頭へ
             }
         }
@@ -59,7 +59,7 @@ pub async fn execute_ignition_task(mut fire: Output<'static>, mut emergency_sw: 
         {
             Either::First(_) => { /* ディレイ完了、バルブオープンへ */ }
             Either::Second(_) => {
-                println!("Aborted: Emergency switch activated during ignition.");
+                // println!("Aborted: Emergency switch activated during ignition.");
                 fire.set_low();
                 continue;
             }
